@@ -490,7 +490,38 @@ class H3LongVideoUpscaleAppend:
                 "result": (full,)}
 
 
+class H3LongVideoReferenceAudios:
+    """Several voice samples as one reference bundle for PK MiniMax H3 Combined (`references`).
+
+    In the prompt they are <Audio 1>, <Audio 2>, ... in this order (after any audio wired to the node's own `audio` input),
+    e.g. 'Sam says in the voice from <Audio 1>: "..."'.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "max_seconds": ("FLOAT", {"default": 10.0, "min": 1.0, "max": 30.0, "step": 0.5,
+                                      "tooltip": "Each sample is cut to this length; longer samples only cost tokens."}),
+        }, "optional": {f"audio_{i}": ("AUDIO",) for i in range(1, 5)}}
+
+    RETURN_TYPES = ("H3_REFS",)
+    RETURN_NAMES = ("references",)
+    FUNCTION = "bundle"
+    CATEGORY = "video/long"
+
+    def bundle(self, max_seconds, **audios):
+        out = []
+        for i in range(1, 5):
+            a = audios.get(f"audio_{i}")
+            if a is None:
+                continue
+            n = int(a["sample_rate"] * max_seconds)
+            out.append({"waveform": a["waveform"][..., :n], "sample_rate": a["sample_rate"]})
+        return ({"pictures": [], "videos": [], "video_audios": [], "audios": out},)
+
+
 NODE_CLASS_MAPPINGS = {
+    "H3LongVideoReferenceAudios": H3LongVideoReferenceAudios,
     "H3LongVideoLoadPart": H3LongVideoLoadPart,
     "H3LongVideoSaveConditioning": H3LongVideoSaveConditioning,
     "H3LongVideoLoadConditioning": H3LongVideoLoadConditioning,
@@ -499,6 +530,7 @@ NODE_CLASS_MAPPINGS = {
     "H3LongVideoAppend": H3LongVideoAppend,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
+    "H3LongVideoReferenceAudios": "Long Video: Reference Audios (voices)",
     "H3LongVideoLoadPart": "Long Video: Load Part Latent",
     "H3LongVideoSaveConditioning": "Long Video: Save Part Conditioning",
     "H3LongVideoLoadConditioning": "Long Video: Load Part Conditioning",

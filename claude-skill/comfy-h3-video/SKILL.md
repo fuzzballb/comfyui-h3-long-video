@@ -95,11 +95,12 @@ Stop one specific job with `POST /interrupt {"prompt_id": "<id>"}` (a bare /inte
 generation run, `POST /free {"unload_models":true,"free_memory":true}` (RAM was at 59/62 GB). 16 parts: ~3 h generate incl. 6 re-rolls,
 ~2.5 h upscale (~10 min/part).
 To shorten a story, drop parts whose neighbours are new shots, and queue the rest as `story:videopart` (enduro.py STORY list).
-Dialogue: H3 invents speech (gibberish, own voices). Story kit: VOICES + lines per part + {DIALOGUE} in the prompt; `run_story.py dialogue`
-(ChatterBox per line via UnifiedTTSTextNode, narrator_voice must be in its dropdown: models/voices/*.wav or voices_examples/male|female|higgs_audio,
-not vibevoice) then `gen` freezes the track with MiniMaxH3SongMaskedAVContext (continuations: source_latent = previous part, track starts with
-its last 39 frames of audio). Tested 2026-10-14: exact words, corr 0.98, correct speaker lips, no cuts. SaveAudio cannot write through the
-output/long_video symlink (save under output/dialogue/).
+Dialogue: best = H3 speaks itself with voice samples (story kit DIALOGUE_MODE h3, node H3LongVideoReferenceAudios -> PK combined
+`references`, prompt "X says in the voice from <Audio n>, <how>, his lips moving clearly: ..."), `gen --check` (venv python, Whisper,
+re-roll < 0.8 word match), then story_kit/location_sound.py (band-limit, wall echo, brown noise): clean samples make H3 voices sound
+like a studio; user preferred the processed version (2026-10-14). Mode tts (ChatterBox + MiniMaxH3SongMaskedAVContext freeze) = exact
+words but flat acting, fixed pauses ("bad acting"). TTS Suite narrator_voice must be in its dropdown (not vibevoice). SaveAudio cannot
+write through the output/long_video symlink. /home has ~3 GB free: no big TTS model downloads there.
 Pure noise / blank images from a workflow that used to work: check `sha256sum` of the model files against Hugging Face (`/api/models/<repo>?blobs=true`).
 On 2026-10-13 `qwen3vl_8b_int8_convrot` and `qwen_image_2.1_int8_convrot` were corrupted (written next to an unfinished browser download); re-downloaded.
 H3 width/height must be multiples of 32: 1280×720 gave a garbage strip in rows 704-719 (use 1280×704). Append now auto-crops.

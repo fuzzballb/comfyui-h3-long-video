@@ -2,6 +2,7 @@
 
     python3 run_story.py dialogue <story.py> <project> [part ...]   # make the dialogue audio of parts with lines (waits)
     python3 run_story.py gen      <story.py> <project> [part ...]   # generate parts (default: all, in STORY order)
+    python3 run_story.py gen --check <story.py> <project> [part ...]  # one at a time, re-roll parts whose speech doesn't match
     python3 run_story.py upscale  <project> <first> <last>            # queue the upscale of parts first..last
     python3 run_story.py prompts  <story.py> [<project>]              # print the final prompts (Picture numbers, dialogue timings)
 
@@ -18,18 +19,27 @@ The story file is plain Python; see stories/dhl_enduro.py and stories/doorstep_d
     VOICES          {speaker: (voice, pronoun)} for dialogue, e.g. {'Sam': ('my_voice.wav', 'his')}; voice = a name from the
                     TTS Audio Suite voice list (models/voices/*.wav or its voices_examples)
 
-Dialogue: give a part a 5th element `lines = [(speaker, "text"), ...]` and put {DIALOGUE} in its prompt. `dialogue` speaks
-every line with ChatterBox in the speaker's voice, joins them with short pauses into one audio track per part and uploads it.
-`gen` then replaces {DIALOGUE} with timed lines ('0.5-3.9s: Sam says, his lips moving clearly: "..."') and freezes that
-audio track in the part (MiniMaxH3SongMaskedAVContext), so H3 only animates the faces to it and can't turn the words into
-gibberish. A continuation part's track starts with the last 39 frames of the previous part's audio, so the join stays exact.
+Dialogue: give a part a 5th element `lines = [(speaker, "text"[, "how it is said"]), ...]` and put {DIALOGUE} in its prompt.
+Two modes (DIALOGUE_MODE in the story file):
+  'h3' (default)  H3 speaks the lines itself, in each speaker's voice: VOICES[speaker][0] is a voice sample in ComfyUI/input,
+                  passed as reference audio (<Audio n>). Voice and face are made together, so intonation, emotion and
+                  ambience are natural. H3 can still garble words, so run `gen --check`: every part is transcribed with
+                  Whisper and re-rolled (up to CHECK_TRIES=3 times) until it matches the script (CHECK_MIN=0.8).
+                  Needs openai-whisper in the Python that runs this script (e.g. ComfyUI's venv).
+  'tts'           `dialogue` speaks every line with ChatterBox (VOICES[speaker][0] = a TTS Audio Suite voice) and `gen` freezes
+                  that track (MiniMaxH3SongMaskedAVContext): exact words guaranteed, but TTS acting is flatter and the part
+                  has no other sound.
 """
-import json, os, random, runpy, subprocess, sys, tempfile, time, urllib.error, urllib.parse, urllib.request, uuid
+import difflib, json, os, random, re, runpy, subprocess, sys, tempfile, time, urllib.error, urllib.parse, urllib.request, uuid
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 COMFY = os.environ.get('COMFY', 'http://127.0.0.1:8188')
+CHECK = False
 FPS, CONTEXT = 24, 39
-LEAD, GAP = 0.5, 0.35          # silence before the first line / between lines (s)
+LEAD, GAP = 0.5, 0.35          # 'tts' mode: silence before the first line / between lines (s)
+# H3 copies the sound of clean voice samples (dry, close, studio-like). location_sound.py fixes that afterwards;
+# a story can also add a sentence about the sound to every dialogue part (DIALOGUE_SOUND = '...')
+DIALOGUE_SOUND = ''
 
 
 def post(q):
@@ -84,7 +94,7 @@ def make_dialogue(st, project, part, video_part, tmp):
     new, _, _, _, lines = st['PARTS'][part]
     voices = st['VOICES']
     files = []
-    for i, (spk, text) in enumerate(lines):
+    for i, (spk, text, *_) in enumerate(lines):
         voice = voices[spk][0]
         q = {'1': {'class_type': 'ChatterBoxEngineNode', 'inputs': {'language': 'local:English', 'device': 'auto', 'exaggeration': 0.5,
                                                                     'temperature': 0.8, 'cfg_weight': 0.5, 'crash_protection_template': 'hmm ,, {seg} hmm ,,'}},
@@ -104,7 +114,7 @@ def make_dialogue(st, project, part, video_part, tmp):
         tail = os.path.join(tmp, 'tail.wav')
         ffmpeg('-sseof', f'-{CONTEXT / FPS:.4f}', '-i', prev, '-vn', '-ar', '48000', '-ac', '1', tail)
         pieces.append((tail, 0.0))
-    for (spk, text), f in zip(lines, files):
+    for (spk, text, *_), f in zip(lines, files):
         d = duration(f)
         timing.append({'speaker': spk, 'text': text, 'start': round(t, 2), 'end': round(t + d, 2)})
         pieces.append((f, t))
@@ -163,7 +173,21 @@ def build(st, project, part, video_part, seed=None, timing=None):
     q['77']['inputs']['value'] = False                     # SLA attention off (it warps straight lines)
     new_shot = bool(new or video_part == 1)
     q['79']['inputs']['value'] = new_shot
-    if lines:
+    if lines and st.get('DIALOGUE_MODE', 'h3') == 'h3':
+        speakers = [k for k in st['VOICES'] if any(ln[0] == k for ln in lines)]   # stable <Audio n> order: VOICES order
+        for i, spk in enumerate(speakers):
+            q[str(36 + i)] = {'class_type': 'LoadAudio', 'inputs': {'audio': st['VOICES'][spk][0]}}
+        q['40a'] = {'class_type': 'H3LongVideoReferenceAudios', 'inputs': {'max_seconds': 10.0, **{f'audio_{i + 1}': [str(36 + i), 0] for i in range(len(speakers))}}}
+        refs['references'] = ['40a', 0]
+        said = []
+        for k, ln in enumerate(lines):
+            spk, text = ln[0], ln[1]
+            how = f', {ln[2]}' if len(ln) > 2 and ln[2] else ''
+            verb = 'says' if k == 0 else ('answers' if lines[k - 1][0] != spk else 'adds')
+            said.append(f'{"Then " if k else ""}{spk} {verb} in the voice from <Audio {speakers.index(spk) + 1}>{how}, '
+                        f'{st["VOICES"][spk][1]} lips moving clearly: "{text}"')
+        prompt = prompt.replace('{DIALOGUE}', ' '.join(said) + (' They speak naturally, like a real conversation, and react to each other. ' + st.get('DIALOGUE_SOUND', DIALOGUE_SOUND)).rstrip())
+    elif lines:
         if timing is None:
             sys.exit(f'part {video_part} has dialogue: run `run_story.py dialogue` first')
         prompt = prompt.replace('{DIALOGUE}', dialogue_text(st, timing))
@@ -194,6 +218,28 @@ def load_timing(project, video_part):
         return None
 
 
+def words(text):
+    return re.findall(r"[a-z0-9']+", text.lower())
+
+
+_WHISPER = None
+
+
+def speech_match(project, video_part, lines):
+    """Transcribe the new frames of a part and compare them with the script (0..1)."""
+    global _WHISPER
+    import whisper
+    if _WHISPER is None:
+        _WHISPER = whisper.load_model(os.environ.get('WHISPER_MODEL', 'small'),
+                                      download_root=os.environ.get('WHISPER_DIR') or None)
+    with tempfile.TemporaryDirectory() as tmp:
+        f = os.path.join(tmp, 'part.mkv')
+        open(f, 'wb').write(fetch(f'part_{video_part:03d}.mkv', f'long_video/{project}/segments'))
+        heard = _WHISPER.transcribe(f, language=os.environ.get('WHISPER_LANG', 'en'))['text'].strip()
+    want = words(' '.join(ln[1] for ln in lines))
+    return difflib.SequenceMatcher(None, want, words(heard)).ratio(), heard
+
+
 def parse(st, specs):
     order = st.get('STORY') or sorted(st['PARTS'])
     if not specs:
@@ -210,6 +256,9 @@ def has_lines(st, s):
 
 
 def main(argv):
+    global CHECK
+    CHECK = '--check' in argv
+    argv = [a for a in argv if a != '--check']
     if len(argv) < 2 or argv[0] not in ('gen', 'upscale', 'prompts', 'dialogue'):
         sys.exit(__doc__)
     cmd = argv[0]
@@ -230,17 +279,32 @@ def main(argv):
         for s, v in parse(st, argv[3:]):
             timing = load_timing(project, v) if project and has_lines(st, s) else None
             if has_lines(st, s) and timing is None:
-                timing = [{'speaker': spk, 'text': t, 'start': 0, 'end': 0} for spk, t in st['PARTS'][s][4]]
+                timing = [{'speaker': ln[0], 'text': ln[1], 'start': 0, 'end': 0} for ln in st['PARTS'][s][4]]
             print(f'--- video part {v} (story part {s})\n' + build(st, project or 'x', s, v, timing=timing)['22']['inputs']['value'])
         return
     project = argv[2]
     parts = parse(st, argv[3:])
+    check = cmd == 'gen' and CHECK
     if cmd == 'dialogue':
         with tempfile.TemporaryDirectory() as tmp:
             for s, v in parts:
                 if has_lines(st, s):
                     for ln in make_dialogue(st, project, s, v, tmp):
                         print(f'part {v}: {ln["start"]:5.2f}-{ln["end"]:5.2f}s {ln["speaker"]}: {ln["text"]}')
+        return
+    if check:
+        tries, need = int(os.environ.get('CHECK_TRIES', 3)), float(os.environ.get('CHECK_MIN', 0.8))
+        for s, v in parts:
+            for attempt in range(1, tries + 1):
+                wait(post(build(st, project, s, v, timing=load_timing(project, v) if has_lines(st, s) else None)))
+                if not has_lines(st, s):
+                    print(f'part {v}: done (no dialogue)'); break
+                score, heard = speech_match(project, v, st['PARTS'][s][4])
+                print(f'part {v} take {attempt}: match {score:.2f}  heard: {heard}')
+                if score >= need:
+                    break
+            else:
+                print(f'part {v}: no take reached {need}; kept the last one')
         return
     ids = []
     for s, v in parts:
