@@ -186,6 +186,8 @@ def build(st, project, part, video_part, seed=None, timing=None):
             verb = 'says' if k == 0 else ('answers' if lines[k - 1][0] != spk else 'adds')
             said.append(f'{"Then " if k else ""}{spk} {verb} in the voice from <Audio {speakers.index(spk) + 1}>{how}, '
                         f'{st["VOICES"][spk][1]} lips moving clearly: "{text}"')
+        if re.search(r'(^|[ ,.])(DY|camera motion,|bullet-time)([ ,.]|$)', prompt):
+            print(f'  warning: part {video_part} has dialogue and a LoRA trigger word in its prompt; H3 may speak it ("D.Y."). Remove the word, keep the LoRA.')
         prompt = prompt.replace('{DIALOGUE}', ' '.join(said) + (' They speak naturally, like a real conversation, and react to each other. ' + st.get('DIALOGUE_SOUND', DIALOGUE_SOUND)).rstrip())
     elif lines:
         if timing is None:

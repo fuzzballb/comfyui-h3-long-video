@@ -101,6 +101,9 @@ re-roll < 0.8 word match), then story_kit/location_sound.py (band-limit, wall ec
 like a studio; user preferred the processed version (2026-10-14). Mode tts (ChatterBox + MiniMaxH3SongMaskedAVContext freeze) = exact
 words but flat acting, fixed pauses ("bad acting"). TTS Suite narrator_voice must be in its dropdown (not vibevoice). SaveAudio cannot
 write through the output/long_video symlink. /home has ~3 GB free: no big TTS model downloads there.
+Dialogue gotchas (street_dialogue, 2026-10-14): H3 SPEAKS LoRA trigger words in dialogue parts ("D.Y.") - drop the word, keep the LoRA;
+a part with only one short line gets filled with chatter - say "after that nobody says anything else, only <sound>". Run --check with
+PYTHONUNBUFFERED=1 to see takes live. 6 parts: 5 passed on take 1.
 Pure noise / blank images from a workflow that used to work: check `sha256sum` of the model files against Hugging Face (`/api/models/<repo>?blobs=true`).
 On 2026-10-13 `qwen3vl_8b_int8_convrot` and `qwen_image_2.1_int8_convrot` were corrupted (written next to an unfinished browser download); re-downloaded.
 H3 width/height must be multiples of 32: 1280×720 gave a garbage strip in rows 704-719 (use 1280×704). Append now auto-crops.
