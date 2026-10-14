@@ -1,0 +1,507 @@
+{
+ "1": {
+  "inputs": {
+   "unet_name": "minimax_h3_hybrid_fl2va_ref2va_b25-49-int8.safetensors",
+   "weight_dtype": "default"
+  },
+  "class_type": "UNETLoader",
+  "_meta": {
+   "title": "Load Diffusion Model"
+  }
+ },
+ "3": {
+  "inputs": {
+   "vae_name": "minimax_h3_video_vae_int8_convrot.safetensors"
+  },
+  "class_type": "VAELoader",
+  "_meta": {
+   "title": "Video VAE"
+  }
+ },
+ "6": {
+  "inputs": {
+   "head_chunks": 4,
+   "model": [
+    "1",
+    0
+   ]
+  },
+  "class_type": "MiniMaxLowVRAMAttention",
+  "_meta": {
+   "title": "MiniMax H3 Low VRAM Attention"
+  }
+ },
+ "7": {
+  "inputs": {
+   "chunks": 2,
+   "seq_threshold": 4096,
+   "model": [
+    "6",
+    0
+   ]
+  },
+  "class_type": "MiniMaxChunkFeedForward",
+  "_meta": {
+   "title": "MiniMax H3 Chunk FeedForward"
+  }
+ },
+ "10": {
+  "inputs": {
+   "mode": "port",
+   "model": [
+    "7",
+    0
+   ]
+  },
+  "class_type": "H3AdaLNLoRAFix",
+  "_meta": {
+   "title": "H3 AdaLN LoRA Fix"
+  }
+ },
+ "301": {
+  "inputs": {
+   "noise_seed": 81524198940128
+  },
+  "class_type": "RandomNoise",
+  "_meta": {
+   "title": "RandomNoise"
+  }
+ },
+ "302": {
+  "inputs": {
+   "sampler_name": "res_multistep"
+  },
+  "class_type": "KSamplerSelect",
+  "_meta": {
+   "title": "KSamplerSelect"
+  }
+ },
+ "303": {
+  "inputs": {
+   "sigmas": "0.6316, 0.3158, 0.0000"
+  },
+  "class_type": "ManualSigmas",
+  "_meta": {
+   "title": "3 step Sigmas"
+  }
+ },
+ "304": {
+  "inputs": {
+   "chunk_length": 102,
+   "temporal_overlap": 17,
+   "anchor_strength": 0.999
+  },
+  "class_type": "MMH3TemporalSplitParams",
+  "_meta": {
+   "title": "MMH3 Temporal Split Params"
+  }
+ },
+ "305": {
+  "inputs": {
+   "model_name": "minimax_h3_latent_upscaler_3d_bf16.safetensors",
+   "width": [
+    "504",
+    1
+   ],
+   "height": [
+    "505",
+    1
+   ],
+   "device": "cuda",
+   "precision": "bf16"
+  },
+  "class_type": "MMH3LatentUpscaleWithModelParams",
+  "_meta": {
+   "title": "MMH3 Latent Upscale with Model Params"
+  }
+ },
+ "306": {
+  "inputs": {
+   "upscale_width": 2560,
+   "upscale_height": 1920,
+   "tile_size_mode": "auto",
+   "tile_width": 736,
+   "tile_height": 736,
+   "grid_rows": 3,
+   "grid_cols": 1,
+   "spatial_w_overlap": 128,
+   "spatial_h_overlap": 128,
+   "fade_width": 32,
+   "fade_height": 32,
+   "min_tile_size": 256,
+   "overlap_mode": "earlier",
+   "overlap_blend": "linear",
+   "joint_steps": true,
+   "token_budget": 70000
+  },
+  "class_type": "MMH3SpatialSplitParams",
+  "_meta": {
+   "title": "MMH3 Spatial Split Params"
+  }
+ },
+ "307": {
+  "inputs": {
+   "cfg": 1,
+   "model": [
+    "10",
+    0
+   ],
+   "conditioning": [
+    "503",
+    0
+   ],
+   "latent": [
+    "502",
+    0
+   ],
+   "noise": [
+    "301",
+    0
+   ],
+   "sampler": [
+    "302",
+    0
+   ],
+   "sigmas": [
+    "303",
+    0
+   ],
+   "latent_upscale_param": [
+    "305",
+    0
+   ],
+   "temporal_split_param": [
+    "304",
+    0
+   ],
+   "spatial_split_param": [
+    "306",
+    0
+   ]
+  },
+  "class_type": "MMH3UltimateUpscale",
+  "_meta": {
+   "title": "MMH3 Ultimate Upscale"
+  }
+ },
+ "308": {
+  "inputs": {
+   "samples": [
+    "307",
+    0
+   ],
+   "vae": [
+    "3",
+    0
+   ]
+  },
+  "class_type": "VAEDecode",
+  "_meta": {
+   "title": "VAE Decode"
+  }
+ },
+ "500": {
+  "inputs": {
+   "value": "my_story"
+  },
+  "class_type": "PrimitiveString",
+  "_meta": {
+   "title": "Project name"
+  }
+ },
+ "501": {
+  "inputs": {
+   "value": 1
+  },
+  "class_type": "PrimitiveInt",
+  "_meta": {
+   "title": "Part number (queue once per part: 1, 2, 3 ...)"
+  }
+ },
+ "502": {
+  "inputs": {
+   "project": [
+    "500",
+    0
+   ],
+   "part": [
+    "501",
+    0
+   ]
+  },
+  "class_type": "H3LongVideoLoadPart",
+  "_meta": {
+   "title": "Long Video: Load Part Latent"
+  }
+ },
+ "503": {
+  "inputs": {
+   "project": [
+    "500",
+    0
+   ],
+   "part": [
+    "501",
+    0
+   ]
+  },
+  "class_type": "H3LongVideoLoadConditioning",
+  "_meta": {
+   "title": "Long Video: Load Part Conditioning"
+  }
+ },
+ "504": {
+  "inputs": {
+   "expression": "round(a * b / 32) * 32",
+   "values.a": [
+    "502",
+    3
+   ],
+   "values.b": [
+    "506",
+    0
+   ]
+  },
+  "class_type": "ComfyMathExpression",
+  "_meta": {
+   "title": "Target width"
+  }
+ },
+ "505": {
+  "inputs": {
+   "expression": "round(a * b / 32) * 32",
+   "values.a": [
+    "502",
+    4
+   ],
+   "values.b": [
+    "506",
+    0
+   ]
+  },
+  "class_type": "ComfyMathExpression",
+  "_meta": {
+   "title": "Target height"
+  }
+ },
+ "506": {
+  "inputs": {
+   "value": 1.5
+  },
+  "class_type": "PrimitiveFloat",
+  "_meta": {
+   "title": "Upscale factor"
+  }
+ },
+ "507": {
+  "inputs": {
+   "expression": "floor(floor(a / 32) * 32 * b)",
+   "values.a": [
+    "502",
+    3
+   ],
+   "values.b": [
+    "506",
+    0
+   ]
+  },
+  "class_type": "ComfyMathExpression",
+  "_meta": {
+   "title": "Crop width"
+  }
+ },
+ "508": {
+  "inputs": {
+   "expression": "floor(floor(a / 32) * 32 * b)",
+   "values.a": [
+    "502",
+    4
+   ],
+   "values.b": [
+    "506",
+    0
+   ]
+  },
+  "class_type": "ComfyMathExpression",
+  "_meta": {
+   "title": "Crop height"
+  }
+ },
+ "510": {
+  "inputs": {
+   "model_name": "film_net_fp16.safetensors"
+  },
+  "class_type": "FrameInterpolationModelLoader",
+  "_meta": {
+   "title": "Load Frame Interpolation Model"
+  }
+ },
+ "511": {
+  "inputs": {
+   "multiplier": 2,
+   "interp_model": [
+    "510",
+    0
+   ],
+   "images": [
+    "308",
+    0
+   ]
+  },
+  "class_type": "FrameInterpolate",
+  "_meta": {
+   "title": "Run Frame Interpolation Model"
+  }
+ },
+ "512": {
+  "inputs": {
+   "method": "rcas",
+   "method.strength": 0.3,
+   "image": [
+    "522",
+    0
+   ]
+  },
+  "class_type": "ImageSharpenKJ",
+  "_meta": {
+   "title": "Image Sharpen KJ"
+  }
+ },
+ "513": {
+  "inputs": {
+   "project": [
+    "500",
+    0
+   ],
+   "part": [
+    "501",
+    0
+   ],
+   "fps_multiplier": [
+    "525",
+    0
+   ],
+   "crop_width": [
+    "507",
+    1
+   ],
+   "crop_height": [
+    "508",
+    1
+   ],
+   "crf": 14,
+   "images": [
+    "526",
+    0
+   ],
+   "context_frames": [
+    "502",
+    1
+   ],
+   "source_frames": [
+    "502",
+    2
+   ]
+  },
+  "class_type": "H3LongVideoUpscaleAppend",
+  "_meta": {
+   "title": "Long Video: Append Upscaled Part"
+  }
+ },
+ "520": {
+  "inputs": {
+   "value": true
+  },
+  "class_type": "PrimitiveBoolean",
+  "_meta": {
+   "title": "Frame interpolation (48 fps)"
+  }
+ },
+ "521": {
+  "inputs": {
+   "value": true
+  },
+  "class_type": "PrimitiveBoolean",
+  "_meta": {
+   "title": "FSR sharpening"
+  }
+ },
+ "522": {
+  "inputs": {
+   "switch": [
+    "520",
+    0
+   ],
+   "on_false": [
+    "308",
+    0
+   ],
+   "on_true": [
+    "511",
+    0
+   ]
+  },
+  "class_type": "ComfySwitchNode",
+  "_meta": {
+   "title": "Interpolation on/off"
+  }
+ },
+ "523": {
+  "inputs": {
+   "value": 2
+  },
+  "class_type": "PrimitiveInt",
+  "_meta": {
+   "title": "Int"
+  }
+ },
+ "524": {
+  "inputs": {
+   "value": 1
+  },
+  "class_type": "PrimitiveInt",
+  "_meta": {
+   "title": "Int"
+  }
+ },
+ "525": {
+  "inputs": {
+   "switch": [
+    "520",
+    0
+   ],
+   "on_false": [
+    "524",
+    0
+   ],
+   "on_true": [
+    "523",
+    0
+   ]
+  },
+  "class_type": "ComfySwitchNode",
+  "_meta": {
+   "title": "fps multiplier"
+  }
+ },
+ "526": {
+  "inputs": {
+   "switch": [
+    "521",
+    0
+   ],
+   "on_false": [
+    "522",
+    0
+   ],
+   "on_true": [
+    "512",
+    0
+   ]
+  },
+  "class_type": "ComfySwitchNode",
+  "_meta": {
+   "title": "Sharpening on/off"
+  }
+ }
+}
