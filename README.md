@@ -279,7 +279,8 @@ The clean upscale is kept (`part_NNN.noface.mkv`), and re-running a part always 
 |---|---|
 | this pack (`h3_output_video`) | long-video, upscale and face nodes |
 | [ComfyUI-PlagueKind-Nodes](https://github.com/PlagueKind/Comfyui-PlagueKind-Nodes) | `PK_MiniMaxH3Combined`, `MMH3UltimateUpscale` + params, `H3AdaLNLoRAFix`, `H3SLAAttention`, `MiniMaxLowVRAMAttention`, `MiniMaxChunkFeedForward` |
-| [ComfyUI-H3-Motion-Context-MultiRef](https://github.com/seitanism/ComfyUI-H3-Motion-Context-MultiRef) | `MiniMaxH3GeneratedAVMaskedContext`, `MiniMaxH3MotionContextTrim` (called internally) |
+| [ComfyUI-H3-Motion-Context-MultiRef](https://github.com/seitanism/ComfyUI-H3-Motion-Context-MultiRef) | `MiniMaxH3GeneratedAVMaskedContext`, `MiniMaxH3MotionContextTrim` (called internally), `MiniMaxH3SongMaskedAVContext` (dialogue parts) |
+| [TTS Audio Suite](https://github.com/diodiogod/TTS-Audio-Suite) (optional) | ChatterBox text-to-speech for [dialogue with your own voices](#dialogue-with-your-own-voices) |
 | [ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) | `ModelPreviewOverrideKJ`, `ImageSharpenKJ` |
 | ComfyUI core (recent, with MiniMax H3 + FILM support) | `FrameInterpolate`, `ComfySwitchNode`, `ComfyMathExpression`, `LTXVConcatAVLatent` / `LTXVSeparateAVLatent` (generic AV latent packing in the face workflow; no LTX model is used) |
 
@@ -474,6 +475,28 @@ This is the full recipe behind the 16-part "urgent delivery" video (2:35): a cou
 7. **Upscale** once all parts are final (it works from the [stored latents](#the-stored-latents), so keep `latents/` until it's done): `python3 story_kit/run_story.py upscale my_project 1 16` (~10 min per part). Before that, free the RAM the generation models still hold: `curl -X POST 127.0.0.1:8188/free -d '{"unload_models":true,"free_memory":true}'`. Result: `my_project_full_upscaled.mp4`.
 8. **Face pass** (optional, workflow 3) for small faces of the main character in wide shots.
 
+### Dialogue with your own voices
+
+Left to itself, H3 makes up the speech together with the picture. With a quoted line in the prompt it usually gets the words right, but often enough it mumbles or turns them into gibberish, and it picks its own voice. The story kit can instead **make the dialogue first and freeze it**:
+
+1. In the story file, give each speaker a voice and a part a list of lines, and put `{DIALOGUE}` in its prompt (see [`story_kit/stories/doorstep_dialogue.py`](story_kit/stories/doorstep_dialogue.py)):
+
+   ```python
+   VOICES = {'Sam': ('my_voice.wav', 'his'), 'Lisa': ('voices_examples/female/female_01.wav', 'her')}
+   PARTS = {1: (True, None, [], "One continuous take, a static medium two-shot ... {DIALOGUE} ...",
+                [('Sam', 'Good afternoon! Urgent delivery for you.'), ('Lisa', 'Oh, finally!')])}
+   ```
+
+   A voice is a file name from the [TTS Audio Suite](https://github.com/diodiogod/TTS-Audio-Suite) voice list: your own recording (10–20 s of clean speech) in `ComfyUI/models/voices/`, or one of its example voices.
+2. `python3 story_kit/run_story.py dialogue my_story.py my_project 1` speaks every line with ChatterBox in its speaker's voice, joins them with short pauses into one track per part, and uploads it with the timings.
+3. `run_story.py gen` replaces `{DIALOGUE}` with the timed lines (`0.5-4.2s: Sam says, his lips moving clearly: "…"`) and freezes the track in the part's audio latent with `MiniMaxH3SongMaskedAVContext` (from the Motion-Context pack). H3 then only animates the faces to it: the words can't change.
+
+For a continuation part, run `dialogue` after the previous part is generated: its track starts with the previous part's last 39 frames of audio, so the join stays exact.
+
+Test (`doorstep_dialogue.py`, 2 parts, 5 lines, the second part a continuation; voice 1 = a user recording, voice 2 = a TTS example voice): Whisper heard exactly the written lines in both parts, the audio matched the TTS track (correlation 0.98), the lips moved only for the person speaking, and neither part had a cut.
+
+Limits: the part's whole sound is the dialogue track, so H3 adds no ambience or footsteps in those parts (mix them in afterwards if needed); keep the lines short enough to end ~0.5 s before the part does (the runner warns).
+
 The scripts talk to ComfyUI at `127.0.0.1:8188` (`COMFY=http://host:port` to change it). The API templates in [`story_kit/templates/`](story_kit/templates) are workflows 1, 2 and 4 in API form; edit them if you change those workflows.
 
 ---
@@ -628,7 +651,7 @@ Keep the sum of extra LoRA strengths around 1.2–1.3 when using the 8-step turb
 - **One action per part.** "He says X and then jogs away" in one part produced two invented cuts. Splitting it into "says X" and "jogs away" fixed it.
 - **Keep the framing of the previous part.** If part N−1 ends in a doorway close-up, don't ask part N for a wide street view; H3 will cut, and it may forget what just happened (e.g. the courier walking off still holding the delivered box).
 - **Static camera in every part.** A camera that pans away and back makes H3 redraw what was out of view, and it comes back different.
-- **Dialogue:** use quoted lines (`He says, his lips moving clearly: "…"`); without quotes H3 mumbles. Keep each part to one or two short sentences (~8 s of new video). Whisper transcribed all test lines correctly.
+- **Dialogue:** use quoted lines (`He says, his lips moving clearly: "…"`); without quotes H3 mumbles. Keep each part to one or two short sentences (~8 s of new video). Even with quotes H3 sometimes produces gibberish and always chooses its own voices; for exact words in a chosen voice, make the dialogue with TTS and freeze it ([Dialogue with your own voices](#dialogue-with-your-own-voices)). Ask for a medium shot with the faces in three-quarter view, and add "whoever is not speaking listens with a closed mouth".
 - **New locations:** use **New shot** plus the location photo as Ref 3, rather than trying to move the camera there inside a continuation.
 - **Props as reference images.** A prop that is only described in words (a motorbike, its top case, a parcel) looks different in every part. Make a clean product sheet of it on a white background (e.g. Qwen Image 2.1 edit, fed with a crop from an earlier part so it keeps the same look) and add it as an extra reference image in the parts that show it: *"the yellow DHL enduro motorbike with the small red DHL top case from Picture 4"*. Number the pictures in input order, and only add a prop's picture to parts whose prompt mentions it. Readable text on a prop (an "URGENT" sticker) holds up much better from a reference than from the prompt, though at 1280×704 small text still smears a little.
 - **Every object has to come from somewhere.** If the courier needs a helmet in part 2, say where he takes it from ("takes a yellow helmet out of the top case"); otherwise H3 makes it appear on the seat from nothing.
