@@ -104,6 +104,39 @@ write through the output/long_video symlink. /home has ~3 GB free: no big TTS mo
 Dialogue gotchas (street_dialogue, 2026-10-14): H3 SPEAKS LoRA trigger words in dialogue parts ("D.Y.") - drop the word, keep the LoRA;
 a part with only one short line gets filled with chatter - say "after that nobody says anything else, only <sound>". Run --check with
 PYTHONUNBUFFERED=1 to see takes live. 6 parts: 5 passed on take 1.
+More gotchas (monopoly, 9 parts, 2026-10-17): a part with NO dialogue must say "Nobody speaks, there are no words at all" or H3
+mumbles; a 10 s argument with 3-4 short lines gets babble in between - write enough lines to fill it + "those are the only words".
+Two characters can share one voice sample (both "in the voice from <Audio 1>"). Re-rolling part N moves its continuation N+1 to
+`_superseded/`; Append then refuses any LATER part ("part N+1 is missing") - queue re-rolls in part order (N, N+1, then later parts).
+A continuation keeps the previous framing (head cut off in the flip carried into the punchline): make such a part a new shot.
+A new-shot part can start with an unrequested insert (2 s top-down table morph): cut it from segments/part_N.mkv (re-encode from the cut,
+re-run the concat) and again from upscaled/part_N.mkv after upscaling. Objects in the location reference are copied as they are
+(houses in the middle of the Monopoly board): fix the reference with a Qwen edit (switch False = edit the input image) instead of prompting.
+Script: `tools/monopoly/monopoly.py <part>...` (FRONT=1 to queue first), check: `tools/monopoly/check_part.sh <part>`. Check each part before the next one builds on it: contact sheet + Whisper word timestamps (CPU `small` while the GPU renders; GPU
+`medium` OOMs) + `silencedetect=n=-35dB:d=0.4` to see that the silent stretches are really silent.
+
+## Blender blockout -> H3 motion transfer (2026-10-17)
+
+For motion a prompt can't direct (vehicle stops/reverses/turns, exact paths, staging, camera moves): animate grey shapes in Blender, render,
+and run H3 V2V on it. Blender 5.2 portable: `<data disk>/linux-apps/blender-5.2.2-linux-x64`, `~/.local/bin/blender`
+(pacman failed: stale package db; a full -Syu is the user's call). Blender scripts in `tools/blockout/` (renders + results in `output/blender_blockout/`; render headless:
+`blender -b -P <script> -- <out_dir>`, Workbench, 1280×704, 24 fps, 243 frames = 5+17k). `stop_reverse_turn_v3.py`: vehicle path from a
+kinematic bicycle model (speed + steering angle -> rear axle; front wheel/fork/bars on a raked steer pivot; wheels spin by distance rolled),
+so steering always matches the path; side street placed where the sim ends. Blender 5: `action.fcurves` is gone - set
+`preferences.edit.keyframe_new_interpolation_type` before inserting keys. Give the clip a silent audio track LONGER than the video
+(`anullsrc -t 10.5`), else the fractional node errors "source audio is N samples short".
+V2V: repo pack ComfyUI-H3-Motion-Context-MultiRef workflow `NEW - V2V Latent Motion Transfer`, pass 1 only (pass 2 needs H3JerkOracle /
+H3TimeSmear / H3ExactRecover, not installed). As shipped it ran >17 min without finishing a step; add turbo LoRA 1.0 + MiniMaxLowVRAMAttention
++ MiniMaxChunkFeedForward, 8 steps, `ref_image_size` match, reference video scaled to 640×352 -> 16-23 min per 10 s. Builder:
+`tools/blockout/blockout_v2v.py <strength>` (edit the video name, prefix and prompt inside). The log prints the step bar only when sampling ends - don't wait for "1/8".
+`global_strength`: 0.9995/0.999 = photoreal, follows position, timing, camera pan, stop/reverse/90° turn and front-wheel steering;
+0.998 the same; 0.99 = textured blocks; 0.985/0.975 = the blockout with textures. Fine motion does not transfer at the photoreal setting
+(wheel rotation stayed minimal with spokes, slow-motion checks, wheel prompt, longer/faster reverse, and an upscale). Good fit: paths,
+staging, jumps, camera moves, scale; bad fit: spinning wheels, fingers, small props, text. Show close-ups to the user as a
+zoomed quarter-speed clip (`crop,scale,setpts=4*PTS`) - still frames can't show rotation.
+Upscale a finished mp4 (no saved latent): `tools/blockout/blockout_upscale.py <input mp4> <prefix>` = VHS_LoadVideo -> NKDAVLatent (keep audio) + conditioning from
+MiniMaxH3ReferenceToVideo with the same prompt/refs -> the long-video upscale chain (σ 0.6316, ×1.5, FILM, RCAS); ~10 min.
+
 Pure noise / blank images from a workflow that used to work: check `sha256sum` of the model files against Hugging Face (`/api/models/<repo>?blobs=true`).
 On 2026-10-13 `qwen3vl_8b_int8_convrot` and `qwen_image_2.1_int8_convrot` were corrupted (written next to an unfinished browser download); re-downloaded.
 H3 width/height must be multiples of 32: 1280×720 gave a garbage strip in rows 704-719 (use 1280×704). Append now auto-crops.
