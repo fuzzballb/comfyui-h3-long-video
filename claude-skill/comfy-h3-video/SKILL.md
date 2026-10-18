@@ -110,7 +110,11 @@ Two characters can share one voice sample (both "in the voice from <Audio 1>"). 
 `_superseded/`; Append then refuses any LATER part ("part N+1 is missing") - queue re-rolls in part order (N, N+1, then later parts).
 A continuation keeps the previous framing (head cut off in the flip carried into the punchline): make such a part a new shot.
 A new-shot part can start with an unrequested insert (2 s top-down table morph): cut it from segments/part_N.mkv (re-encode from the cut,
-re-run the concat) and again from upscaled/part_N.mkv after upscaling. Objects in the location reference are copied as they are
+re-run the concat) and again from upscaled/part_N.mkv after upscaling: the upscale decodes the saved LATENT, so the cut intro comes back
+and `run_story.py upscale` builds `<project>_full_upscaled.mp4` itself with that part 2 s longer (picture behind the audio, no lip sync,
+end cut off by -shortest). Re-cut upscaled/part_N.mkv, then rebuild the full upscaled file yourself (concat + `-map 1:a` from the full
+mp4). Re-encode a cut part with `-preset medium -crf 14 -r 48` (same as the other parts): `-preset slow` gives ref=5/level 5.0, and
+a `-c copy` concat with mismatched SPS shows constant decode errors in that part. Objects in the location reference are copied as they are
 (houses in the middle of the Monopoly board): fix the reference with a Qwen edit (switch False = edit the input image) instead of prompting.
 Script: `tools/monopoly/monopoly.py <part>...` (FRONT=1 to queue first), check: `tools/monopoly/check_part.sh <part>`. Check each part before the next one builds on it: contact sheet + Whisper word timestamps (CPU `small` while the GPU renders; GPU
 `medium` OOMs) + `silencedetect=n=-35dB:d=0.4` to see that the silent stretches are really silent.
