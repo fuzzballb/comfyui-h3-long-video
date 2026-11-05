@@ -1,10 +1,12 @@
 """Queue a multi-part story on a running ComfyUI (127.0.0.1:8188).
 
     python3 run_story.py dialogue <story.py> <project> [part ...]   # make the dialogue audio of parts with lines (waits)
-    python3 run_story.py gen      <story.py> <project> [part ...]   # generate parts (default: all, in STORY order)
-    python3 run_story.py gen --check <story.py> <project> [part ...]  # one at a time, re-roll parts whose speech doesn't match
+    python3 run_story.py gen      <story.py> <project> [part ...]   # generate parts (default: all, in STORY order), one at a
+                                                                      # time, re-rolling parts with cuts or wrong speech
+    python3 run_story.py gen --no-check <story.py> <project> [part ...]  # queue all parts at once, no checks
     python3 run_story.py upscale  <project> <first> <last>            # queue the upscale of parts first..last
     python3 run_story.py prompts  <story.py> [<project>]              # print the final prompts (Picture numbers, dialogue timings)
+    python3 run_story.py lint     <story.py>                          # warn about prompt patterns that made H3 cut or move oddly
 
 A part spec is the video part number (1, 2, ...) or `<story part>:<video part>` to put story part 10 at video position 8.
 FRONT=1 queues at the front of the queue (later front jobs run first, so queue a re-roll and its follow-up in reverse order).
@@ -12,6 +14,7 @@ COMFY=http://host:port overrides the server.
 
 The story file is plain Python; see stories/dhl_enduro.py and stories/doorstep_dialogue.py. It defines:
     FACE, BODY      image names in ComfyUI/input (Picture 1 and 2: face crop and outfit sheet of the main character)
+    FACE_CONT       optional Picture 1 for continuation parts (e.g. the sheet): stops face close-up cutaways
     PROPS           {'<TOKEN>': 'image.png'}: a prop sheet is added as an extra reference only to parts whose prompt has the token
     PARTS           {story part: (new_shot, location image or None, [(lora file, strength)], prompt[, lines])}
     STORY           optional list: video part n = story part STORY[n-1] (to drop story parts without renumbering)
@@ -19,12 +22,18 @@ The story file is plain Python; see stories/dhl_enduro.py and stories/doorstep_d
     VOICES          {speaker: (voice, pronoun)} for dialogue, e.g. {'Sam': ('my_voice.wav', 'his')}; voice = a name from the
                     TTS Audio Suite voice list (models/voices/*.wav or its voices_examples)
 
+Checks: `gen` lints the prompts first (see lint()), then renders one part at a time and re-rolls a part (new
+seed, up to CHECK_TRIES=3 takes) when it has a hard cut (frame jump > CHECK_CUT=30, see check_cuts.py) or, for dialogue
+parts, when Whisper's transcript matches the script less than CHECK_MIN=0.8. A part that fails every take is kept, and the
+continuation parts after it are skipped up to the next new shot (they would build on the bad part); the run then goes on.
+The script waits for every part, so keep it running (e.g. in tmux or with nohup). `--no-check` queues everything at once.
+
 Dialogue: give a part a 5th element `lines = [(speaker, "text"[, "how it is said"]), ...]` and put {DIALOGUE} in its prompt.
 Two modes (DIALOGUE_MODE in the story file):
   'h3' (default)  H3 speaks the lines itself, in each speaker's voice: VOICES[speaker][0] is a voice sample in ComfyUI/input,
                   passed as reference audio (<Audio n>). Voice and face are made together, so intonation, emotion and
-                  ambience are natural. H3 can still garble words, so run `gen --check`: every part is transcribed with
-                  Whisper and re-rolled (up to CHECK_TRIES=3 times) until it matches the script (CHECK_MIN=0.8).
+                  ambience are natural. H3 can still garble words, so `gen` transcribes every part with
+                  Whisper and re-rolls it (up to CHECK_TRIES=3 times) until it matches the script (CHECK_MIN=0.8).
                   Needs openai-whisper in the Python that runs this script (e.g. ComfyUI's venv).
   'tts'           `dialogue` speaks every line with ChatterBox (VOICES[speaker][0] = a TTS Audio Suite voice) and `gen` freezes
                   that track (MiniMaxH3SongMaskedAVContext): exact words guaranteed, but TTS acting is flatter and the part
@@ -33,6 +42,8 @@ Two modes (DIALOGUE_MODE in the story file):
 import difflib, json, os, random, re, runpy, subprocess, sys, tempfile, time, urllib.error, urllib.parse, urllib.request, uuid
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+from check_cuts import describe, find_cuts
 COMFY = os.environ.get('COMFY', 'http://127.0.0.1:8188')
 CHECK = False
 FPS, CONTEXT = 24, 39
@@ -149,7 +160,9 @@ def build(st, project, part, video_part, seed=None, timing=None):
     new, loc, loras, prompt = entry[:4]
     lines = entry[4] if len(entry) > 4 else None
     q = json.load(open(os.path.join(HERE, 'templates', 'generate_api.json')))
-    q['11']['inputs']['image'] = st['FACE']
+    # FACE_CONT (optional): Picture 1 for continuation parts. A tight face crop makes H3 cut to face close-ups;
+    # continuations already get the identity from the previous part's frames.
+    q['11']['inputs']['image'] = st['FACE'] if (new or video_part == 1) else st.get('FACE_CONT', st['FACE'])
     q['12']['inputs']['image'] = st['BODY']
     refs = q['23']['inputs']
     if loc:
@@ -242,6 +255,63 @@ def speech_match(project, video_part, lines):
     return difflib.SequenceMatcher(None, want, words(heard)).ratio(), heard
 
 
+# Prompt patterns that went wrong in test stories (README "Prompting tips"). Each: (regex, message); checked on the final prompt.
+NEG = r"\b(?:does not|doesn't|do not|don't|never|no|without|not)\b(?:\s+\w+){1,3}"
+LINT = [
+    (r"\b(?:wink\w*|blows? a kiss|raises? an eyebrow|sticks? out (?:his|her|their) tongue|licks?)\b",
+     'small facial action "{m}": H3 tends to cut to a face close-up for it'),
+]
+
+
+def lint_prompt(text, new_shot, has_dialogue):
+    """Warnings for one final prompt."""
+    t = text.lower()
+    pos = re.sub(NEG, ' ', t)                             # drop negated phrases ("does not turn around")
+    out = []
+    static = re.search(r'static|locked-off|camera (?:does not|doesn\'t|never) move|camera stays', t)
+    moving = re.search(r'camera (?:glides|pans|tracks|follows|dollies|moves|zooms|pulls back|pushes in|orbits|circles|swings)'
+                       r'|tracking shot|\bdolly\b', pos)
+    if static and moving:
+        out.append(f'"{static.group(0)}" and "{moving.group(0)}" in the same prompt: contradicting camera instructions invite cuts')
+    turns = re.findall(r'\b(?:turns?|spins?|pivots?|twirls?)\b', pos)
+    if len(turns) > 1:
+        out.append(f'{len(turns)} turns in one part: turning back and forth looks unnatural and makes H3 redraw the background '
+                   f'(it jumped back to the location reference\'s framing); use one turn, show the back while walking away')
+    thens = len(re.findall(r'\bthen\b', pos))
+    if not new_shot and thens >= 2:
+        out.append(f'{thens + 1} actions in a row ("then" x{thens}) in a continuation: fewer actions per part means fewer cuts')
+    for rx, msg in LINT:
+        m = re.search(rx, pos)
+        if m:
+            out.append(msg.format(m=m.group(0)))
+    if not has_dialogue and not re.search(r'nobody speaks|no words|no dialogue|nobody says', t):
+        out.append('no dialogue and no "Nobody speaks, there are no words at all": H3 fills silence with mumbling')
+    return out
+
+
+def lint(st, parts, project='x'):
+    """Print the warnings for every part; returns how many there were."""
+    n = 0
+    for s, v in parts:
+        entry = st['PARTS'][s]
+        lines = has_lines(st, s)
+        timing = [{'speaker': ln[0], 'text': ln[1], 'start': 0, 'end': 0} for ln in entry[4]] if lines else None
+        text = build(st, project, s, v, timing=timing)['22']['inputs']['value']
+        new_shot = bool(entry[0] or v == 1)
+        warns = lint_prompt(text, new_shot, bool(lines))
+        for w in warns:
+            print(f'part {v}: {w}')
+        n += len(warns)
+    return n
+
+
+def cuts_in(project, video_part):
+    with tempfile.TemporaryDirectory() as tmp:
+        f = os.path.join(tmp, 'part.mkv')
+        open(f, 'wb').write(fetch(f'part_{video_part:03d}.mkv', f'long_video/{project}/segments'))
+        return find_cuts(f, float(os.environ.get('CHECK_CUT', 30)))
+
+
 def parse(st, specs):
     order = st.get('STORY') or sorted(st['PARTS'])
     if not specs:
@@ -259,9 +329,9 @@ def has_lines(st, s):
 
 def main(argv):
     global CHECK
-    CHECK = '--check' in argv
-    argv = [a for a in argv if a != '--check']
-    if len(argv) < 2 or argv[0] not in ('gen', 'upscale', 'prompts', 'dialogue'):
+    CHECK = '--no-check' not in argv
+    argv = [a for a in argv if a not in ('--check', '--no-check')]   # --check: the default, kept for old command lines
+    if len(argv) < 2 or argv[0] not in ('gen', 'upscale', 'prompts', 'dialogue', 'lint'):
         sys.exit(__doc__)
     cmd = argv[0]
     if cmd == 'upscale':
@@ -284,8 +354,16 @@ def main(argv):
                 timing = [{'speaker': ln[0], 'text': ln[1], 'start': 0, 'end': 0} for ln in st['PARTS'][s][4]]
             print(f'--- video part {v} (story part {s})\n' + build(st, project or 'x', s, v, timing=timing)['22']['inputs']['value'])
         return
+    if cmd == 'lint':
+        n = lint(st, parse(st, argv[2:]))
+        print(f'{n} warning(s)' if n else 'no warnings')
+        print('Not checked automatically: a continuation must describe only what is in view at the END of the part before it '
+              '(look at its last frame). Naming something off-screen there ("toward the staircase") makes H3 cut to it.')
+        return
     project = argv[2]
     parts = parse(st, argv[3:])
+    if cmd == 'gen' and lint(st, parts, project):
+        print('(lint warnings above; the parts are rendered anyway)')
     check = cmd == 'gen' and CHECK
     if cmd == 'dialogue':
         with tempfile.TemporaryDirectory() as tmp:
@@ -296,17 +374,27 @@ def main(argv):
         return
     if check:
         tries, need = int(os.environ.get('CHECK_TRIES', 3)), float(os.environ.get('CHECK_MIN', 0.8))
+        skip, report = False, []
         for s, v in parts:
+            new_shot = bool(st['PARTS'][s][0] or v == 1)
+            if skip and not new_shot:
+                report.append(f'part {v}: skipped (continues a part that failed the check)'); print(report[-1]); continue
+            skip = False
             for attempt in range(1, tries + 1):
                 wait(post(build(st, project, s, v, timing=load_timing(project, v) if has_lines(st, s) else None)))
-                if not has_lines(st, s):
-                    print(f'part {v}: done (no dialogue)'); break
-                score, heard = speech_match(project, v, st['PARTS'][s][4])
-                print(f'part {v} take {attempt}: match {score:.2f}  heard: {heard}')
-                if score >= need:
-                    break
+                cuts = cuts_in(project, v)
+                msg, ok = describe(cuts), not cuts
+                if has_lines(st, s):
+                    score, heard = speech_match(project, v, st['PARTS'][s][4])
+                    msg += f', speech match {score:.2f}  heard: {heard}'
+                    ok = ok and score >= need
+                print(f'part {v} take {attempt}: {msg}', flush=True)
+                if ok:
+                    report.append(f'part {v}: ok (take {attempt})'); break
             else:
-                print(f'part {v}: no take reached {need}; kept the last one')
+                report.append(f'part {v}: FAILED all {tries} takes, kept the last ({msg.split(", heard")[0]})')
+                print(report[-1]); skip = True
+        print('\nsummary:\n  ' + '\n  '.join(report))
         return
     ids = []
     for s, v in parts:

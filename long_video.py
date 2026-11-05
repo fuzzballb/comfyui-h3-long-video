@@ -465,6 +465,15 @@ class H3LongVideoUpscaleAppend:
         prev_seg = os.path.join(up, f"part_{part - 1:03d}.mkv")
         prev_tail = os.path.join(up, f"part_{part - 1:03d}.tail.mkv")
 
+        # a new upscale makes an earlier face pass stale: Face Detail would paste onto its old clean copy (part_NNN.noface.mkv)
+        # and bring back the previous version of the part. Drop that copy and the face track; run the face pass again afterwards.
+        stale = [part] + ([part - 1] if ctx and os.path.isfile(prev_seg) and os.path.isfile(prev_tail) else [])
+        for p in stale:
+            for f in (f"part_{p:03d}.noface.mkv", f"part_{p:03d}.face.json"):
+                if os.path.isfile(os.path.join(up, f)):
+                    os.remove(os.path.join(up, f))
+                    _LOG.info("long video upscale: removed stale face pass file %s (re-run the face pass for part %d)", f, p)
+
         if ctx and os.path.isfile(prev_seg) and os.path.isfile(prev_tail):
             prev = _read_frames(prev_seg)
             raw_tail = _read_frames(prev_tail)[-ctx:]

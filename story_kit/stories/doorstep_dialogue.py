@@ -1,8 +1,8 @@
 """Example with dialogue: "Doorstep" (2 parts, ~18 s). The courier delivers a parcel; the second part continues the first.
 
-    python3 ../run_story.py gen --check doorstep_dialogue.py doorstep      # with ComfyUI's venv python (needs openai-whisper)
+    python3 ../run_story.py gen doorstep_dialogue.py doorstep              # with ComfyUI's venv python (needs openai-whisper)
 
-H3 speaks the lines itself, in the voices of the two samples, and --check re-rolls a part until Whisper hears the script.
+H3 speaks the lines itself, in the voices of the two samples, and gen re-rolls a part until Whisper hears the script.
 Put a 10-20 s recording of each voice in ComfyUI/input as voice_sam.wav and voice_lisa.wav (or set SAM_VOICE / LISA_VOICE).
 The third element of a line says how it is said; it steers the acting.
 
@@ -17,7 +17,7 @@ BODY = 'example_body.jpg'
 PROPS = {}
 WIDTH, HEIGHT, SECONDS, TURBO = 1280, 704, 10.0, True
 
-DIALOGUE_MODE = 'h3'   # H3 speaks the lines in the sample voices; run gen with --check. 'tts' = ChatterBox track, frozen.
+DIALOGUE_MODE = 'h3'   # H3 speaks the lines in the sample voices; gen checks the speech. 'tts' = ChatterBox track, frozen.
 
 # voice samples (10-20 s of clean speech) in ComfyUI/input; in 'tts' mode these are TTS Audio Suite voice names instead
 VOICES = {

@@ -65,7 +65,7 @@ into N+1: re-upscale N+1 afterwards. Compare props original vs upscale with a zo
 Face pass (optional): `H3 Video/... PlagueKind Long Video - Face Detail` re-renders small faces (30-140 px) of the reference person only as a 512² H3 v2v
 close-up at sigma 0.8, pasted back with an oval mask. Tracker (YuNet + SFace in models/detection): only frontal faces >= 40 px confirm identity,
 every frame must score >= match (0.3 in the workflow) on its own, no chaining (chaining drifted onto dancers/audience). Reference image is
-shrunk to <= 640 px first (YuNet misdetects on 2048 px). Run it only after ALL parts are upscaled. 0.6 kept the wrong face, 0.8 matched (DHL);
+shrunk to <= 640 px first (YuNet misdetects on 2048 px). Run it only after ALL parts are upscaled. Re-upscaling part N (or N+1, its crossfade) now deletes part_N.noface.mkv/.face.json (fix 2026-11-05; before that the face pass silently pasted onto the OLD upscale). 0.6 kept the wrong face, 0.8 matched (DHL);
 0.95 looked bad and warped (angel). It can't reshape a face that a whole part got wrong: regenerate those parts instead.
 Face consistency across a new shot: put a tight face crop of the person as Picture 1 and say "his face is exactly the face in Picture 1: <traits>"
 (angel_catwalk option B fixed a wrong catwalk face this way). Side effect: H3 may cut away to a close-up copying that crop's white backdrop, and
@@ -89,6 +89,7 @@ Cuts in dhl_enduro_v2 (16 parts, 2026-10-14) and their fixes: name what IS there
 footbridge" drew an intact bridge twice); the part after a mid-action ending (bullet-time landing) cut every time -> make it a new shot;
 part N+1 must start where N ends (helmet in hands -> "pulls the helmet on"), few actions per continuation; "rushing water" in the sound line
 went with water close-up cuts; a prop "in the background" with its reference doubled the bike -> leave it out of that shot.
+Automatic (2026-11-05): `run_story.py gen` (check is the DEFAULT now; `--no-check` = queue all at once) re-rolls any part with a hard cut (new seed, CHECK_TRIES=3) before the next part starts, skips continuations of a part that fails all takes; `run_story.py lint <story>` (also run by gen) flags static+moving camera, >1 turn, >=3 actions in a continuation, winks/kisses, missing "Nobody speaks". Not automatic: a continuation must only name what is in view at the END of the previous part (black_angel_catwalk: "toward the staircase"/"dancers behind him" with the camera facing away cut back to the stage start, 3 re-rolls; a shared location line CW did the same) - look at the last frame; and use real choreography (catwalk: stop, hold pose, 2nd pose, ONE half turn, show the back walking away; side/back/front on the spot made H3 redraw the background at the stage). A flagged cut can be a jump back in time: compare frames around it before keeping it. Wait loops on a re-rolled part: compare mtime, not existence.
 Cut check: isolated YAVG spikes > ~30 = hard cut; POV/tracking parts have many values 12-25 from motion alone. Check every part right after it
 renders and re-roll with FRONT=1 while later parts keep rendering (a re-roll only moves continuation parts up to the next new shot).
 Stop one specific job with `POST /interrupt {"prompt_id": "<id>"}` (a bare /interrupt can land on the next job). Before upscaling after a
@@ -96,13 +97,13 @@ generation run, `POST /free {"unload_models":true,"free_memory":true}` (RAM was 
 ~2.5 h upscale (~10 min/part).
 To shorten a story, drop parts whose neighbours are new shots, and queue the rest as `story:videopart` (enduro.py STORY list).
 Dialogue: best = H3 speaks itself with voice samples (story kit DIALOGUE_MODE h3, node H3LongVideoReferenceAudios -> PK combined
-`references`, prompt "X says in the voice from <Audio n>, <how>, his lips moving clearly: ..."), `gen --check` (venv python, Whisper,
+`references`, prompt "X says in the voice from <Audio n>, <how>, his lips moving clearly: ..."), `gen` (checks by default; venv python, Whisper,
 re-roll < 0.8 word match), then story_kit/location_sound.py (band-limit, wall echo, brown noise): clean samples make H3 voices sound
 like a studio; user preferred the processed version (2026-10-14). Mode tts (ChatterBox + MiniMaxH3SongMaskedAVContext freeze) = exact
 words but flat acting, fixed pauses ("bad acting"). TTS Suite narrator_voice must be in its dropdown (not vibevoice). SaveAudio cannot
 write through the output/long_video symlink. /home has ~3 GB free: no big TTS model downloads there.
 Dialogue gotchas (street_dialogue, 2026-10-14): H3 SPEAKS LoRA trigger words in dialogue parts ("D.Y.") - drop the word, keep the LoRA;
-a part with only one short line gets filled with chatter - say "after that nobody says anything else, only <sound>". Run --check with
+a part with only one short line gets filled with chatter - say "after that nobody says anything else, only <sound>". Run gen with
 PYTHONUNBUFFERED=1 to see takes live. 6 parts: 5 passed on take 1.
 More gotchas (monopoly, 9 parts, 2026-10-17): a part with NO dialogue must say "Nobody speaks, there are no words at all" or H3
 mumbles; a 10 s argument with 3-4 short lines gets babble in between - write enough lines to fill it + "those are the only words".
