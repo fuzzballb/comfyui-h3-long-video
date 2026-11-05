@@ -245,8 +245,13 @@ def load_timing(project, video_part):
         return None
 
 
+NUMBERS = ('zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen '
+           'eighteen nineteen twenty').split()
+
+
 def words(text):
-    return re.findall(r"[a-z0-9']+", text.lower())
+    """Lower-case words; Whisper writes numbers as digits ("3, 2, 1, go!"), so 0-20 become words like in the script."""
+    return [NUMBERS[int(w)] if w.isdigit() and int(w) <= 20 else w for w in re.findall(r"[a-z0-9']+", text.lower())]
 
 
 _WHISPER = None
