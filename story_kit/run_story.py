@@ -19,12 +19,15 @@ The story file is plain Python; see stories/dhl_enduro.py and stories/doorstep_d
     PARTS           {story part: (new_shot, location image or None, [(lora file, strength)], prompt[, lines])}
     STORY           optional list: video part n = story part STORY[n-1] (to drop story parts without renumbering)
     WIDTH, HEIGHT, SECONDS, TURBO   optional (defaults 1280, 704, 10.0, True)
-    VOICES          {speaker: (voice, pronoun)} for dialogue, e.g. {'Sam': ('my_voice.wav', 'his')}; voice = a name from the
-                    TTS Audio Suite voice list (models/voices/*.wav or its voices_examples)
+    VOICES          {speaker: (voice, pronoun)} for dialogue, e.g. {'Sam': ('my_voice.wav', 'his')}; voice = a voice sample
+                    in ComfyUI/input ('h3' mode; None = H3's own voice, no sample) or a TTS Audio Suite voice ('tts' mode)
 
 Checks: `gen` lints the prompts first (see lint()), then renders one part at a time and re-rolls a part (new
-seed, up to CHECK_TRIES=3 takes) when it has a hard cut (frame jump > CHECK_CUT=30, see check_cuts.py) or, for dialogue
-parts, when Whisper's transcript matches the script less than CHECK_MIN=0.8. A part that fails every take is kept, and the
+seed, up to CHECK_TRIES=3 takes) when it has a hard cut (frame jump > CHECK_CUT=30, see check_cuts.py), when Whisper's
+transcript of a dialogue part matches the script less than CHECK_MIN=0.8, or when Whisper is sure (no_speech_prob <
+CHECK_NSP=0.5, 2+ words) that someone speaks in a part without lines (CHECK_SILENT=0 turns that off, e.g. for songs).
+Run it with ComfyUI's venv Python (openai-whisper). Everything a person says must be a line with its exact words:
+H3 speaks whatever talking the prompt describes ("counts down: three, two, one") and garbles it. A part that fails every take is kept, and the
 continuation parts after it are skipped up to the next new shot (they would build on the bad part); the run then goes on.
 The script waits for every part, so keep it running (e.g. in tmux or with nohup). `--no-check` queues everything at once.
 
@@ -187,21 +190,30 @@ def build(st, project, part, video_part, seed=None, timing=None):
     new_shot = bool(new or video_part == 1)
     q['79']['inputs']['value'] = new_shot
     if lines and st.get('DIALOGUE_MODE', 'h3') == 'h3':
-        speakers = [k for k in st['VOICES'] if any(ln[0] == k for ln in lines)]   # stable <Audio n> order: VOICES order
+        voices = st.get('VOICES', {})
+        missing = sorted({ln[0] for ln in lines} - set(voices))
+        if missing:
+            sys.exit(f'part {video_part}: speaker(s) {", ".join(missing)} not in VOICES (use (None, "her") for no voice sample)')
+        # stable <Audio n> order: VOICES order; a speaker with voice None gets H3's own voice (no reference audio)
+        speakers = [k for k in voices if voices[k][0] and any(ln[0] == k for ln in lines)]
         for i, spk in enumerate(speakers):
-            q[str(36 + i)] = {'class_type': 'LoadAudio', 'inputs': {'audio': st['VOICES'][spk][0]}}
-        q['40a'] = {'class_type': 'H3LongVideoReferenceAudios', 'inputs': {'max_seconds': 10.0, **{f'audio_{i + 1}': [str(36 + i), 0] for i in range(len(speakers))}}}
-        refs['references'] = ['40a', 0]
+            q[str(36 + i)] = {'class_type': 'LoadAudio', 'inputs': {'audio': voices[spk][0]}}
+        if speakers:
+            q['40a'] = {'class_type': 'H3LongVideoReferenceAudios', 'inputs': {'max_seconds': 10.0, **{f'audio_{i + 1}': [str(36 + i), 0] for i in range(len(speakers))}}}
+            refs['references'] = ['40a', 0]
         said = []
         for k, ln in enumerate(lines):
             spk, text = ln[0], ln[1]
             how = f', {ln[2]}' if len(ln) > 2 and ln[2] else ''
             verb = 'says' if k == 0 else ('answers' if lines[k - 1][0] != spk else 'adds')
-            said.append(f'{"Then " if k else ""}{spk} {verb} in the voice from <Audio {speakers.index(spk) + 1}>{how}, '
-                        f'{st["VOICES"][spk][1]} lips moving clearly: "{text}"')
+            voice = f' in the voice from <Audio {speakers.index(spk) + 1}>' if spk in speakers else ''
+            said.append(f'{"Then " if k else ""}{spk} {verb}{voice}{how}, {voices[spk][1]} lips moving clearly: "{text}"')
         if re.search(r'(^|[ ,.])(DY|camera motion,|bullet-time)([ ,.]|$)', prompt):
             print(f'  warning: part {video_part} has dialogue and a LoRA trigger word in its prompt; H3 may speak it ("D.Y."). Remove the word, keep the LoRA.')
-        prompt = prompt.replace('{DIALOGUE}', ' '.join(said) + (' They speak naturally, like a real conversation, and react to each other. ' + st.get('DIALOGUE_SOUND', DIALOGUE_SOUND)).rstrip())
+        # without "only words" H3 fills the rest of the part with chatter or mumbling
+        after = (' They speak naturally, like a real conversation, and react to each other. Those are the only words.'
+                 if len({ln[0] for ln in lines}) > 1 else ' After that nobody says anything else.')
+        prompt = prompt.replace('{DIALOGUE}', ' '.join(said) + (after + ' ' + st.get('DIALOGUE_SOUND', DIALOGUE_SOUND)).rstrip())
     elif lines:
         if timing is None:
             sys.exit(f'part {video_part} has dialogue: run `run_story.py dialogue` first')
@@ -240,8 +252,13 @@ def words(text):
 _WHISPER = None
 
 
-def speech_match(project, video_part, lines):
-    """Transcribe the new frames of a part and compare them with the script (0..1)."""
+# Whisper writes these on music and crowd noise (seen with no_speech_prob 0.24 on a music-only part): not speech
+HALLUCINATION = (r"(?:thanks?(?: you)?(?: so much)? for watching|thank you|please subscribe|subscribe to (?:my|the) channel|"
+                 r"you|bye|music|applause|\W*)[.!?]*")
+
+
+def transcribe(project, video_part):
+    """Whisper on the new frames of a part: (all text, text of the segments that are confidently speech)."""
     global _WHISPER
     import whisper
     if _WHISPER is None:
@@ -250,13 +267,30 @@ def speech_match(project, video_part, lines):
     with tempfile.TemporaryDirectory() as tmp:
         f = os.path.join(tmp, 'part.mkv')
         open(f, 'wb').write(fetch(f'part_{video_part:03d}.mkv', f'long_video/{project}/segments'))
-        heard = _WHISPER.transcribe(f, language=os.environ.get('WHISPER_LANG', 'en'))['text'].strip()
+        r = _WHISPER.transcribe(f, language=os.environ.get('WHISPER_LANG', 'en'))
+    sure = ' '.join(seg['text'].strip() for seg in r['segments'] if seg['no_speech_prob'] < float(os.environ.get('CHECK_NSP', 0.5))
+                    and not re.fullmatch(HALLUCINATION, seg['text'].strip().lower()))
+    return r['text'].strip(), sure
+
+
+def speech_match(project, video_part, lines):
+    """Transcribe a part and compare it with the script (0..1)."""
+    heard, _ = transcribe(project, video_part)
     want = words(' '.join(ln[1] for ln in lines))
     return difflib.SequenceMatcher(None, want, words(heard)).ratio(), heard
 
 
+def unscripted_speech(project, video_part):
+    """Words Whisper is fairly sure were spoken in a part without lines ('' = silent, None = Whisper not installed)."""
+    try:
+        _, sure = transcribe(project, video_part)
+    except ImportError:
+        return None
+    return sure if len(words(sure)) >= 2 else ''
+
+
 # Prompt patterns that went wrong in test stories (README "Prompting tips"). Each: (regex, message); checked on the final prompt.
-NEG = r"\b(?:does not|doesn't|do not|don't|never|no|without|not)\b(?:\s+\w+){1,3}"
+NEG = r"\b(?:does not|doesn't|do not|don't|never|no|nobody|without|not)\b(?:\s+\w+){1,3}"
 LINT = [
     (r"\b(?:wink\w*|blows? a kiss|raises? an eyebrow|sticks? out (?:his|her|their) tongue|licks?)\b",
      'small facial action "{m}": H3 tends to cut to a face close-up for it'),
@@ -284,6 +318,11 @@ def lint_prompt(text, new_shot, has_dialogue):
         m = re.search(rx, pos)
         if m:
             out.append(msg.format(m=m.group(0)))
+    talk = re.search(r'\b(?:says|said|speaks|talks|counts?(?: down)?|shouts?|calls? out|whispers?|announces?|yells?|asks?|answers?|'
+                     r'tells?|mouths?)\b|"[^"]+"', pos)
+    if not has_dialogue and talk:
+        out.append(f'"{talk.group(0)}" without dialogue lines: H3 speaks it and invents (garbled) words. Write the exact words as a '
+                   'line (VOICES speaker with voice None if there is no sample) so they are in the prompt and checked, or drop it')
     if not has_dialogue and not re.search(r'nobody speaks|no words|no dialogue|nobody says', t):
         out.append('no dialogue and no "Nobody speaks, there are no words at all": H3 fills silence with mumbling')
     return out
@@ -295,8 +334,7 @@ def lint(st, parts, project='x'):
     for s, v in parts:
         entry = st['PARTS'][s]
         lines = has_lines(st, s)
-        timing = [{'speaker': ln[0], 'text': ln[1], 'start': 0, 'end': 0} for ln in entry[4]] if lines else None
-        text = build(st, project, s, v, timing=timing)['22']['inputs']['value']
+        text = entry[3].replace('{DIALOGUE}', ' ')           # the prompt as written; the generated dialogue text is not linted
         new_shot = bool(entry[0] or v == 1)
         warns = lint_prompt(text, new_shot, bool(lines))
         for w in warns:
@@ -388,6 +426,13 @@ def main(argv):
                     score, heard = speech_match(project, v, st['PARTS'][s][4])
                     msg += f', speech match {score:.2f}  heard: {heard}'
                     ok = ok and score >= need
+                elif os.environ.get('CHECK_SILENT', '1') != '0':      # a part without lines must stay without words
+                    said = unscripted_speech(project, v)
+                    if said is None:
+                        print('  (openai-whisper not installed in this Python: speech not checked; use ComfyUI\'s venv)')
+                    elif said:
+                        msg += f', unscripted speech: {said}'
+                        ok = False
                 print(f'part {v} take {attempt}: {msg}', flush=True)
                 if ok:
                     report.append(f'part {v}: ok (take {attempt})'); break
