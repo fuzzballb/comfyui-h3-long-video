@@ -121,6 +121,25 @@ a `-c copy` concat with mismatched SPS shows constant decode errors in that part
 Script: `tools/monopoly/monopoly.py <part>...` (FRONT=1 to queue first), check: `tools/monopoly/check_part.sh <part>`. Check each part before the next one builds on it: contact sheet + Whisper word timestamps (CPU `small` while the GPU renders; GPU
 `medium` OOMs) + `silencedetect=n=-35dB:d=0.4` to see that the silent stretches are really silent.
 
+Person LoRA + conversations (neon_night story, 17-20 parts, 2026-11-07/08): story options `UNET` (the LoRA's base model) and
+`UPSCALE_LORAS` (+ story file as 4th arg of `upscale`) keep a trained person's face in generation AND upscale. "facing the camera"
+for lip sync made both talk into the lens: use "looking at <other>, face in three-quarter view and still clearly visible, lips moving
+clearly" + one shared sentence (look at each other, nobody looks into the camera, relaxed gestures, the listener nods/smiles); lips
+still matched (Whisper 0.88-1.00). One acting cue per line before each `<d>` tag improved the acting. A hoarse voice: describe it
+("a clear, smooth, warm voice without any rasp") - a voice sample next to the LoRA widened the framing and sounded less natural. A word
+Whisper mishears still passes at 0.96 ("coffee" -> "cocky"): read the transcript, add "saying the word X slowly and very clearly".
+Gotchas the user spotted by eye: holding a cup + touching an earpiece = a third arm (one hand busy at a time: "puts the cup down
+first"); a car door opened the wrong way ("hinged at its front edge, swings outward toward the front of the car"); pointing "ahead"
+while the camera walks backward in front of them = the target is behind the camera (put the car beside them, in view); a sudden shout
+at the start of a calm continuation (say "for the first three seconds nobody says anything", then the trigger); a desert end shot
+gave no sense of leaving the city (location ref of the city edge: last towers on both sides, desert + sun ahead); scenes felt like
+time skips -> bridge parts (sitting down, leaving, running to the car) and a longer chase seen from outside. A continuation that needs a
+very different camera position (walking close-up -> across a counter) cut in 3/3 takes: make it a new shot, "from the first frame
+they already sit". Empty location refs: Qwen Image 2.1 t2i 1440x800 "an empty place with no people at all: ..."; car interior =
+"camera on the hood looking back through the windshield". Inserting parts into a rendered story: add story parts with new keys + a
+`STORY` order list, make a NEW project and copy the kept parts under their new numbers (segments/part_N.mkv, latents/part_N.safetensors
++ .cond.pt, upscaled/part_N.mkv + .tail.mkv, shots.json entries {N: 0 new shot / 39 continuation}), then `gen` the rest by video number.
+
 ## Blender blockout -> H3 motion transfer (2026-10-17)
 
 For motion a prompt can't direct (vehicle stops/reverses/turns, exact paths, staging, camera moves): animate grey shapes in Blender, render,

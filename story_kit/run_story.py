@@ -4,7 +4,8 @@
     python3 run_story.py gen      <story.py> <project> [part ...]   # generate parts (default: all, in STORY order), one at a
                                                                       # time, re-rolling parts with cuts or wrong speech
     python3 run_story.py gen --no-check <story.py> <project> [part ...]  # queue all parts at once, no checks
-    python3 run_story.py upscale  <project> <first> <last>            # queue the upscale of parts first..last
+    python3 run_story.py upscale  <project> <first> <last> [story.py] # queue the upscale of parts first..last (story.py: its
+                                                                      # UPSCALE_LORAS, e.g. a person LoRA, go into the upscale too)
     python3 run_story.py prompts  <story.py> [<project>]              # print the final prompts (Picture numbers, dialogue timings)
     python3 run_story.py lint     <story.py>                          # warn about prompt patterns that made H3 cut or move oddly
 
@@ -19,6 +20,8 @@ The story file is plain Python; see stories/dhl_enduro.py and stories/doorstep_d
     PARTS           {story part: (new_shot, location image or None, [(lora file, strength)], prompt[, lines])}
     STORY           optional list: video part n = story part STORY[n-1] (to drop story parts without renumbering)
     WIDTH, HEIGHT, SECONDS, TURBO   optional (defaults 1280, 704, 10.0, True)
+    UNET            optional diffusion model for generation (e.g. the model a person LoRA was trained on)
+    UPSCALE_LORAS   optional [(lora file, strength)] used by `upscale ... <story.py>` (a person LoRA keeps the face at sigma 0.63)
     VOICES          {speaker: (voice, pronoun)} for dialogue, e.g. {'Sam': ('my_voice.wav', 'his')}; voice = a voice sample
                     in ComfyUI/input ('h3' mode; None = H3's own voice, no sample) or a TTS Audio Suite voice ('tts' mode)
 
@@ -163,6 +166,8 @@ def build(st, project, part, video_part, seed=None, timing=None):
     new, loc, loras, prompt = entry[:4]
     lines = entry[4] if len(entry) > 4 else None
     q = json.load(open(os.path.join(HERE, 'templates', 'generate_api.json')))
+    if st.get('UNET'):
+        q['1']['inputs']['unet_name'] = st['UNET']
     # FACE_CONT (optional): Picture 1 for continuation parts. A tight face crop makes H3 cut to face close-ups;
     # continuations already get the identity from the previous part's frames.
     q['11']['inputs']['image'] = st['FACE'] if (new or video_part == 1) else st.get('FACE_CONT', st['FACE'])
@@ -324,7 +329,7 @@ def lint_prompt(text, new_shot, has_dialogue):
         if m:
             out.append(msg.format(m=m.group(0)))
     talk = re.search(r'\b(?:says|said|speaks|talks|counts?(?: down)?|shouts?|calls? out|whispers?|announces?|yells?|asks?|answers?|'
-                     r'tells?|mouths?)\b|"[^"]+"', pos)
+                     r'tells?|mouths)\b|"[^"]+"', pos)
     if not has_dialogue and talk:
         out.append(f'"{talk.group(0)}" without dialogue lines: H3 speaks it and invents (garbled) words. Write the exact words as a '
                    'line (VOICES speaker with voice None if there is no sample) so they are in the prompt and checked, or drop it')
@@ -380,6 +385,11 @@ def main(argv):
     if cmd == 'upscale':
         project, first, last = argv[1], int(argv[2]), int(argv[3])
         base = json.load(open(os.path.join(HERE, 'templates', 'upscale_api.json')))
+        prev = ['7', 0]
+        for i, (name, strength) in enumerate(runpy.run_path(argv[4]).get('UPSCALE_LORAS', []) if len(argv) > 4 else []):
+            base[str(90 + i)] = {'class_type': 'LoraLoaderModelOnly', 'inputs': {'lora_name': name, 'strength_model': strength, 'model': prev}}
+            prev = [str(90 + i), 0]
+        base['10']['inputs']['model'] = prev
         ids = []
         for p in range(first, last + 1):
             q = json.loads(json.dumps(base))
