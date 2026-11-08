@@ -479,6 +479,21 @@ This is the full recipe behind the 16-part "urgent delivery" video (2:35): a cou
 
 **Adding parts to a story you already rendered**: give the new parts new keys in `PARTS` and put the order in `STORY = [1, 2, ..., 11, 21, 12, ...]` (video part n = story part `STORY[n-1]`). Video part numbers then shift, so make a new project folder and copy the parts you keep under their new numbers: `segments/part_NNN.mkv`, `latents/part_NNN.safetensors` and `.cond.pt`, `upscaled/part_NNN.mkv` and `.tail.mkv`, and their `shots.json` entries (`0` = new shot, `39` = continuation). Then `gen` only the new and changed video parts and upscale from the first changed part.
 
+### Gate mode: review every part before the next one
+
+`gen` checks cuts and words by itself, but most problems in a 20-part dialogue story were things only a reviewer sees: a popular bar with nobody in it, an old car in a cyberpunk world, lines shouted, the sun on the wrong side, one person visible in a car that should hold two. Found at the end, they meant re-rendering most of the film twice. Gate mode finds them one part at a time:
+
+```bash
+story_kit/gate.sh my_story.py my_project 2 3 4 5 7 8     # parts in order
+```
+
+After each part it runs `gen` for that part (cuts, words, re-rolls), measures the loudness (`GATE_LOUD`, default −21 LUFS max momentary: normal dialogue peaked at −23 to −26, the shouted lines at −15 to −19), writes a contact sheet at 2 fps to `output/long_video/my_project/gate/sheet_NNN.jpg` and a status line to `gate/gate.log`, and then **waits**: `touch gate/approve_N` goes on, `touch gate/reroll_N` renders part N again (change its prompt in the story file first if the problem is in the script). Nothing is built on a part that hasn't passed. The reviewer can be you or an agent; for unattended runs let the reviewer fix a failing part and continue rather than wait for a person.
+
+Two checklists make the review fast:
+
+- **Before rendering, per part, on the script:** Who else is in the scene (a busy place needs people; at an explosion everyone runs *away*)? Where is everything relative to the camera: who is left and right, where the car and the sun are, what the windows show? Does every object fit the world and match its other shots (use a prop sheet)? Any "loud"/"shouting" acting cues you don't want? One hand busy at a time? Does the part start where the previous one ends?
+- **After each part, on the sheet:** the same questions against the frames, plus faces visible, no extra limbs, doors and seats used the right way.
+
 ### Dialogue with your own voices
 
 H3 makes the speech together with the picture. With quoted lines in the prompt it usually gets the words right, but sometimes it mumbles or produces gibberish, and it chooses its own voices. The story kit handles both:

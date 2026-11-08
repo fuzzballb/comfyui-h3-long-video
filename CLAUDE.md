@@ -12,7 +12,7 @@ working on the code.
   `run_story.py build()` addresses their nodes by id (`'22'` prompt, `'40'` seed, `'79'` new shot ...). Change a
   workflow and its template together, and check those ids still match.
 - `story_kit/run_story.py`: runs a story file (`gen` = lint + one part at a time with cut/speech re-rolls,
-  `--no-check`, `upscale`, `prompts`, `lint`, `dialogue`). `check_cuts.py` (`find_cuts()`), `propsheet.py`,
+  `--no-check`, `upscale`, `prompts`, `lint`, `dialogue`). `check_cuts.py` (`find_cuts()`), `gate.sh` (one part at a time, held until approved), `propsheet.py`,
   `location_sound.py`. Example stories in `story_kit/stories/`, their reference images in `story_kit/refs/`.
 - `claude-skill/comfy-h3-video/`: a skill for *using* all this (copy to `~/.claude/skills/`). It is generated from a
   private copy by a sync script that strips personal names and paths: edit it there, not here, when you have that copy.

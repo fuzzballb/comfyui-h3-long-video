@@ -140,6 +140,14 @@ they already sit". Empty location refs: Qwen Image 2.1 t2i 1440x800 "an empty pl
 `STORY` order list, make a NEW project and copy the kept parts under their new numbers (segments/part_N.mkv, latents/part_N.safetensors
 + .cond.pt, upscaled/part_N.mkv + .tail.mkv, shots.json entries {N: 0 new shot / 39 continuation}), then `gen` the rest by video number.
 
+Gate mode (2026-11-08, after two near-full re-renders of a 20-part story): `story_kit/gate.sh <story> <project> <parts...>`
+renders one part, runs the cut/word check, measures loudness (ebur128 max momentary > -21 LUFS = shouting; normal -23..-26,
+shouted -15..-19), writes `<project>/gate/sheet_NNN.jpg` + a line in `gate/gate.log`, and waits for `gate/approve_N` or
+`gate/reroll_N` (edit the prompt first if the script is the cause; `skipgen_N` + `reroll_N` = re-check without rendering).
+Check the script per part BEFORE rendering (other people in the scene, left/right/sun/windows relative to the camera, props
+and style consistent, no "loud" cues, one hand busy at a time, N+1 starts where N ends) and each sheet after. USER RULE:
+when a part fails the gate, fix it yourself and continue - the user is not at the computer to approve.
+
 ## Blender blockout -> H3 motion transfer (2026-10-17)
 
 For motion a prompt can't direct (vehicle stops/reverses/turns, exact paths, staging, camera moves): animate grey shapes in Blender, render,
