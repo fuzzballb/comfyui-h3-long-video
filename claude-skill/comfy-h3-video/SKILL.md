@@ -147,6 +147,14 @@ shouted -15..-19), writes `<project>/gate/sheet_NNN.jpg` + a line in `gate/gate.
 Check the script per part BEFORE rendering (other people in the scene, left/right/sun/windows relative to the camera, props
 and style consistent, no "loud" cues, one hand busy at a time, N+1 starts where N ends) and each sheet after. USER RULE:
 when a part fails the gate, fix it yourself and continue - the user is not at the computer to approve.
+Since 2026-11-09 gate.sh also checks the join of continuations (last frame N-1 vs first frame N, YAVG > GATE_JOIN 25 =
+"(JUMP)": H3 swapped the background without a visible cut; good joins 1-9, bad 29/44) - the cut check can't see these.
+A flaw you notice is a FAIL, not a note (a driver-side back-door entry was approved with a note; the user saw it first).
+Prompt fixes from the 17-part gate run (30 renders, 12 gate re-rolls): continuation starts with what is in view, then moves
+("starts exactly where the last picture ended ... then drives out onto"); no "swerves"/"neon streaking over the windshield"
+(draws signs sliding over the glass) -> "glass clean and clear, nothing touches it"; order events in time and put a line
+after its cause ("only after the police are gone, he says"); "!" + "laughing" = shouted -> "." + "quietly, not loud at all";
+a loudness flag after the last word (engine) is not speech - compare ebur128 per 0.5 s with Whisper word times.
 
 ## Blender blockout -> H3 motion transfer (2026-10-17)
 

@@ -487,12 +487,22 @@ This is the full recipe behind the 16-part "urgent delivery" video (2:35): a cou
 story_kit/gate.sh my_story.py my_project 2 3 4 5 7 8     # parts in order
 ```
 
-After each part it runs `gen` for that part (cuts, words, re-rolls), measures the loudness (`GATE_LOUD`, default −21 LUFS max momentary: normal dialogue peaked at −23 to −26, the shouted lines at −15 to −19), writes a contact sheet at 2 fps to `output/long_video/my_project/gate/sheet_NNN.jpg` and a status line to `gate/gate.log`, and then **waits**: `touch gate/approve_N` goes on, `touch gate/reroll_N` renders part N again (change its prompt in the story file first if the problem is in the script). Nothing is built on a part that hasn't passed. The reviewer can be you or an agent; for unattended runs let the reviewer fix a failing part and continue rather than wait for a person.
+After each part it runs `gen` for that part (cuts, words, re-rolls), measures the loudness (`GATE_LOUD`, default −21 LUFS max momentary: normal dialogue peaked at −23 to −26, the shouted lines at −15 to −19), compares the first frame of a continuation with the last frame of the part before it (`GATE_JOIN`, default 25: good joins were 1–9; a value of 29–44 meant H3 had swapped the background without a visible cut, which the cut check can't see), writes a contact sheet at 2 fps to `output/long_video/my_project/gate/sheet_NNN.jpg` and a status line to `gate/gate.log`, and then **waits**: `touch gate/approve_N` goes on, `touch gate/reroll_N` renders part N again (change its prompt in the story file first if the problem is in the script). Nothing is built on a part that hasn't passed. The reviewer can be you or an agent; for unattended runs let the reviewer fix a failing part and continue rather than wait for a person.
 
 Two checklists make the review fast:
 
 - **Before rendering, per part, on the script:** Who else is in the scene (a busy place needs people; at an explosion everyone runs *away*)? Where is everything relative to the camera: who is left and right, where the car and the sun are, what the windows show? Does every object fit the world and match its other shots (use a prop sheet)? Any "loud"/"shouting" acting cues you don't want? One hand busy at a time? Does the part start where the previous one ends?
-- **After each part, on the sheet:** the same questions against the frames, plus faces visible, no extra limbs, doors and seats used the right way.
+- **After each part, on the sheet:** the same questions against the frames, plus faces visible, no extra limbs, doors and seats used the right way (who gets in through which door).
+- **A flaw you notice is a fail.** In the test run one part was approved with a note that a passenger got in through the driver-side back door; it was the first thing the viewer noticed. Re-roll instead of writing it down.
+
+What the gate caught in a 17-part run (30 renders: 4 automatic re-rolls, 12 at the gate, all fixed by changing the prompt), and the prompt fixes:
+
+- **Background swapped at a join** (narrow street → highway at dusk, joins 29 and 44): the continuation's prompt described a place that wasn't in view at the end of the previous part ("looking back toward the orange glow", "the car leaves the city on a highway"). Start with what is in view, then move: "It starts exactly where the last picture ended: the same narrow street … then the car drives out of the street and up a ramp onto the highway".
+- **Neon signs and labels sliding across the windshield** in car shots: caused by "the car swerves" and "neon light streaking over the windshield". Use "colored light falls on their faces, the windshield glass is clean and clear, nothing touches it" and accelerate instead of swerve.
+- **A line said before its moment** ("We lost them!" with the police still in the rear window): order the events in time and keep the line for last: "During the first four seconds nobody speaks: the police car spins out and falls behind … Only after the police are gone, he says …".
+- **Shouted lines** despite "not shouting": an exclamation mark plus "laughing with relief" still came out at −17 LUFS. Write the line with a full stop and "quietly … not loud at all".
+- **Loudness flags that aren't speech**: an engine roar after the last word tripped the limit. Compare ebur128 per half second with Whisper's word times before re-rolling.
+- **Things floating in the car** (papers, loose objects): say "there are no loose objects in the car and nothing floats in the air".
 
 ### Dialogue with your own voices
 
